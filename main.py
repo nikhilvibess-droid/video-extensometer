@@ -2,7 +2,7 @@ import sys
 
 from PyQt5 import QtWidgets
 
-from ui.main_window import MainWindow
+from ui.dashboard_window import DashboardWindow
 from auth.login_dialog import LoginDialog
 
 
@@ -16,7 +16,7 @@ if __name__ == "__main__":
 
         if login.exec_() == QtWidgets.QDialog.Accepted:
 
-            window = MainWindow()
+            window = DashboardWindow()
 
             window.show()
 

@@ -23,5 +23,21 @@ class DatabaseManager:
             role TEXT
         )
         """)
+        cur.execute("""
+CREATE TABLE IF NOT EXISTS audit_logs(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT,
+    action TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+""")
+        cur.execute("""
+CREATE TABLE IF NOT EXISTS reports(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT,
+    strain REAL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+""")
 
         self.conn.commit()
