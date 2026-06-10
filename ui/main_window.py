@@ -5,15 +5,33 @@ import numpy as np
 from camera import FLIRCamera
 from tracking import MarkerTracker
 from ui.marker_selection import MarkerSelector
+from database.report_manager import ReportManager
 
 
 class MainWindow(QtWidgets.QWidget):
 
-    def __init__(self):
+    def __init__(
+        self,
+        user=None
+    ):
         super().__init__()
 
-        self.setWindowTitle("Video Extensometer - FLIR Blackfly S")
-        self.resize(1400, 900)
+        self.user = user
+
+        self.report_manager = ReportManager()
+
+        self.current_strain = 0.0
+
+        self.current_distance_mm = 0.0
+
+        self.setWindowTitle(
+            "Video Extensometer - FLIR Blackfly S"
+        )
+
+        self.resize(
+            1400,
+            900
+        )
 
         # ==================
         # UI LAYOUT
@@ -309,12 +327,20 @@ class MainWindow(QtWidgets.QWidget):
         """
         Stop real-time tracking.
         """
+
         self.tracking = False
+
         self.capture_btn.setEnabled(True)
-        self.start_btn.setEnabled(self.markers_selected)
+
+        self.start_btn.setEnabled(
+            self.markers_selected
+        )
+
         self.stop_btn.setEnabled(False)
 
-        print("[TRACKING STOP] Tracking halted by user")
+        print(
+            "[TRACKING STOP] Tracking halted by user"
+        )
 
     # ==================
     # FRAME UPDATE (Main Loop)
@@ -371,9 +397,14 @@ class MainWindow(QtWidgets.QWidget):
                 )
 
                 mm_dist = pixel_dist * self.pixel_to_mm
+
                 strain = (mm_dist - self.initial_mm) / self.initial_mm
 
                 self.current_pixel_distance = pixel_dist
+
+                self.current_distance_mm = mm_dist
+
+                self.current_strain = strain
 
                 # Update results display
                 self.result_label.setText(

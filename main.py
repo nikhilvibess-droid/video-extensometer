@@ -15,11 +15,9 @@ if __name__ == "__main__":
         login = LoginDialog()
 
         if login.exec_() == QtWidgets.QDialog.Accepted:
-
-            window = DashboardWindow()
-
+            user = login.logged_user
+            window = DashboardWindow(user)
             window.show()
-
             sys.exit(app.exec_())
 
     except Exception as e:

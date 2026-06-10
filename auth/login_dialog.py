@@ -10,6 +10,8 @@ class LoginDialog(QtWidgets.QDialog):
 
         self.auth = AuthManager()
 
+        self.logged_user = None
+
         self.setWindowTitle("Login")
         self.resize(350, 180)
 
@@ -48,6 +50,10 @@ class LoginDialog(QtWidgets.QDialog):
             username,
             password
         ):
+
+            self.logged_user = (
+                self.auth.current_user
+            )
 
             self.accept()
 

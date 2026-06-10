@@ -2,12 +2,20 @@ from PyQt5 import QtWidgets
 
 from ui.main_window import MainWindow
 from ui.users_page import UsersPage
+from ui.audit_logs_page import AuditLogsPage
 
 
 class DashboardWindow(QtWidgets.QMainWindow):
 
-    def __init__(self):
+    def __init__(self, user=None):
         super().__init__()
+
+        self.user = user
+
+        self.role = "superadmin"
+
+        if user:
+            self.role = user["role"]
 
         self.setWindowTitle(
             "Video Extensometer"
@@ -36,16 +44,32 @@ class DashboardWindow(QtWidgets.QMainWindow):
 
         sidebar = QtWidgets.QVBoxLayout()
 
-        self.tracking_btn = (
-            QtWidgets.QPushButton(
-                "Tracking"
-            )
+        self.user_label = QtWidgets.QLabel(
+            f"User: {user['username'] if user else 'Unknown'}"
         )
 
-        self.users_btn = (
-            QtWidgets.QPushButton(
-                "Users"
-            )
+        self.role_label = QtWidgets.QLabel(
+            f"Role: {self.role}"
+        )
+
+        sidebar.addWidget(
+            self.user_label
+        )
+
+        sidebar.addWidget(
+            self.role_label
+        )
+
+        self.tracking_btn = QtWidgets.QPushButton(
+            "Tracking"
+        )
+
+        self.users_btn = QtWidgets.QPushButton(
+            "Users"
+        )
+
+        self.audit_btn = QtWidgets.QPushButton(
+            "Audit Logs"
         )
 
         sidebar.addWidget(
@@ -55,6 +79,19 @@ class DashboardWindow(QtWidgets.QMainWindow):
         sidebar.addWidget(
             self.users_btn
         )
+
+        sidebar.addWidget(
+            self.audit_btn
+        )
+
+        # RBAC
+
+        if self.role not in [
+            "superadmin",
+            "admin"
+        ]:
+            self.users_btn.hide()
+            self.audit_btn.hide()
 
         sidebar.addStretch()
 
@@ -67,17 +104,15 @@ class DashboardWindow(QtWidgets.QMainWindow):
         # PAGES
         # =====================
 
-        self.pages = (
-            QtWidgets.QStackedWidget()
+        self.pages = QtWidgets.QStackedWidget()
+
+        self.tracking_page = MainWindow(
+            self.user
         )
 
-        self.tracking_page = (
-            MainWindow()
-        )
+        self.users_page = UsersPage()
 
-        self.users_page = (
-            UsersPage()
-        )
+        self.audit_page = AuditLogsPage()
 
         self.pages.addWidget(
             self.tracking_page
@@ -85,6 +120,10 @@ class DashboardWindow(QtWidgets.QMainWindow):
 
         self.pages.addWidget(
             self.users_page
+        )
+
+        self.pages.addWidget(
+            self.audit_page
         )
 
         layout.addWidget(
@@ -107,5 +146,12 @@ class DashboardWindow(QtWidgets.QMainWindow):
             lambda:
             self.pages.setCurrentWidget(
                 self.users_page
+            )
+        )
+
+        self.audit_btn.clicked.connect(
+            lambda:
+            self.pages.setCurrentWidget(
+                self.audit_page
             )
         )

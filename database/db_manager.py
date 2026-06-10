@@ -39,5 +39,26 @@ CREATE TABLE IF NOT EXISTS reports(
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 )
 """)
-
+        cur.execute("""
+CREATE TABLE IF NOT EXISTS reports(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT,
+    gauge_length REAL,
+    initial_distance REAL,
+    final_distance REAL,
+    strain REAL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+""")
+        cur.execute("""
+CREATE TABLE IF NOT EXISTS reports(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT,
+    gauge_length REAL,
+    initial_distance REAL,
+    final_distance REAL,
+    strain REAL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+""")
         self.conn.commit()
