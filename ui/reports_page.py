@@ -1,4 +1,5 @@
 import csv
+from datetime import datetime
 from PyQt5 import QtWidgets, QtCore
 
 from database.report_manager import ReportManager
@@ -98,11 +99,15 @@ class ReportsPage(QtWidgets.QWidget):
 
     def export_csv(self):
         try:
+            default_name = datetime.now().strftime(
+                "reports_%Y%m%d_%H%M%S.csv"
+            )
+
             options = QtWidgets.QFileDialog.Options()
             fileName, _ = QtWidgets.QFileDialog.getSaveFileName(
                 self,
                 "Save Reports CSV",
-                "",
+                default_name,
                 "CSV Files (*.csv);;All Files (*)",
                 options=options
             )
@@ -116,7 +121,7 @@ class ReportsPage(QtWidgets.QWidget):
                     writer.writerow(
                         [
                             "ID",
-                            "Username",
+                            "User",
                             "Gauge Length",
                             "Initial Distance",
                             "Final Distance",
@@ -127,13 +132,16 @@ class ReportsPage(QtWidgets.QWidget):
                     for r in reports:
                         writer.writerow(r)
 
+                print("[CSV EXPORTED]")
+
                 QtWidgets.QMessageBox.information(
                     self,
                     "Success",
-                    "CSV exported successfully"
+                    f"CSV exported successfully\n\n{fileName}"
                 )
 
         except Exception as e:
+            print(f"[ERROR] Failed to export CSV: {e}")
             QtWidgets.QMessageBox.warning(
                 self,
                 "Error",

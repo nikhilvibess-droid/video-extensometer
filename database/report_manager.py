@@ -1,3 +1,4 @@
+from datetime import datetime
 from database.db_manager import DatabaseManager
 
 
@@ -22,6 +23,7 @@ class ReportManager:
         cur = None
         try:
             cur = self.db.conn.cursor()
+            created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             cur.execute(
                 """
                 INSERT INTO reports
@@ -30,16 +32,18 @@ class ReportManager:
                     gauge_length,
                     initial_distance,
                     final_distance,
-                    strain
+                    strain,
+                    created_at
                 )
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     username,
                     gauge_length,
                     initial_distance,
                     final_distance,
-                    strain
+                    strain,
+                    created_at
                 )
             )
             self.db.conn.commit()
