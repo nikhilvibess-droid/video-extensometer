@@ -1,9 +1,11 @@
+from datetime import datetime
 from PyQt5 import QtWidgets
 
 from ui.main_window import MainWindow
 from ui.users_page import UsersPage
 from ui.audit_logs_page import AuditLogsPage
 from ui.reports_page import ReportsPage
+from ui.settings_page import SettingsPage
 from database.db_manager import DatabaseManager
 
 
@@ -78,6 +80,10 @@ class DashboardWindow(QtWidgets.QMainWindow):
             "Audit Logs"
         )
 
+        self.settings_btn = QtWidgets.QPushButton(
+            "Settings"
+        )
+
         sidebar.addWidget(
             self.tracking_btn
         )
@@ -92,6 +98,10 @@ class DashboardWindow(QtWidgets.QMainWindow):
 
         sidebar.addWidget(
             self.audit_btn
+        )
+
+        sidebar.addWidget(
+            self.settings_btn
         )
 
         # RBAC
@@ -125,15 +135,15 @@ class DashboardWindow(QtWidgets.QMainWindow):
 
         stats_layout = QtWidgets.QHBoxLayout()
 
-        self.tests_card, self.tests_val = self.create_stat_card("TOTAL TESTS", "0")
+        self.reports_card, self.reports_val = self.create_stat_card("TOTAL REPORTS", "0")
         self.users_card, self.users_val = self.create_stat_card("TOTAL USERS", "0")
         self.today_card, self.today_val = self.create_stat_card("REPORTS TODAY", "0")
         self.user_card, self.user_val = self.create_stat_card(
-            "CURRENT LOGGED USER",
+            "CURRENT USER",
             self.user["username"] if self.user else "Unknown"
         )
 
-        stats_layout.addWidget(self.tests_card)
+        stats_layout.addWidget(self.reports_card)
         stats_layout.addWidget(self.users_card)
         stats_layout.addWidget(self.today_card)
         stats_layout.addWidget(self.user_card)
@@ -152,6 +162,8 @@ class DashboardWindow(QtWidgets.QMainWindow):
 
         self.audit_page = AuditLogsPage()
 
+        self.settings_page = SettingsPage()
+
         self.pages.addWidget(
             self.tracking_page
         )
@@ -166,6 +178,10 @@ class DashboardWindow(QtWidgets.QMainWindow):
 
         self.pages.addWidget(
             self.audit_page
+        )
+
+        self.pages.addWidget(
+            self.settings_page
         )
 
         right_panel.addWidget(self.pages)
@@ -207,6 +223,13 @@ class DashboardWindow(QtWidgets.QMainWindow):
             )
         )
 
+        self.settings_btn.clicked.connect(
+            lambda:
+            self.pages.setCurrentWidget(
+                self.settings_page
+            )
+        )
+
         self.pages.currentChanged.connect(
             self.update_stats
         )
@@ -218,24 +241,26 @@ class DashboardWindow(QtWidgets.QMainWindow):
 
     def create_stat_card(self, title, initial_value):
         card = QtWidgets.QFrame()
+        card.setObjectName("statCard")
         card.setFrameShape(QtWidgets.QFrame.StyledPanel)
         card.setStyleSheet("""
-            QFrame {
-                background-color: #f8f9fa;
-                border: 1px solid #dee2e6;
-                border-radius: 6px;
-                padding: 10px;
+            QFrame#statCard {
+                background-color: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
             }
         """)
 
         card_layout = QtWidgets.QVBoxLayout()
+        card_layout.setContentsMargins(16, 16, 16, 16)
+        card_layout.setSpacing(8)
 
         title_label = QtWidgets.QLabel(title)
-        title_label.setStyleSheet("font-size: 11px; color: #6c757d; font-weight: bold;")
+        title_label.setStyleSheet("font-size: 11px; color: #64748b; font-weight: bold; text-transform: uppercase;")
         card_layout.addWidget(title_label)
 
         value_label = QtWidgets.QLabel(initial_value)
-        value_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #212529;")
+        value_label.setStyleSheet("font-size: 28px; font-weight: bold; color: #0f172a;")
         card_layout.addWidget(value_label)
 
         card.setLayout(card_layout)
@@ -246,10 +271,10 @@ class DashboardWindow(QtWidgets.QMainWindow):
             db = DatabaseManager()
             cur = db.conn.cursor()
 
-            # Total Tests
+            # Total Reports
             cur.execute("SELECT COUNT(*) FROM reports")
-            total_tests = cur.fetchone()[0]
-            self.tests_val.setText(str(total_tests))
+            total_reports = cur.fetchone()[0]
+            self.reports_val.setText(str(total_reports))
 
             # Total Users
             cur.execute("SELECT COUNT(*) FROM users")
@@ -257,12 +282,21 @@ class DashboardWindow(QtWidgets.QMainWindow):
             self.users_val.setText(str(total_users))
 
             # Reports Today
+            today_str = datetime.now().strftime("%Y-%m-%d")
             cur.execute(
-                "SELECT COUNT(*) FROM reports WHERE date(created_at, 'localtime') = date('now', 'localtime')"
+                "SELECT COUNT(*) FROM reports WHERE date(created_at) = ?",
+                (today_str,)
             )
             reports_today = cur.fetchone()[0]
             self.today_val.setText(str(reports_today))
 
             cur.close()
+
+            if hasattr(self, 'settings_page'):
+                self.settings_page.update_db_info()
         except Exception as e:
             print(f"[ERROR] Failed to update dashboard stats: {e}")
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.update_stats()
