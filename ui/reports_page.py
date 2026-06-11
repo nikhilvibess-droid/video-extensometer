@@ -43,7 +43,7 @@ class ReportsPage(QtWidgets.QWidget):
         layout.addWidget(self.refresh_btn)
 
         self.export_btn = QtWidgets.QPushButton(
-            "Export to CSV"
+            "Export CSV"
         )
         layout.addWidget(self.export_btn)
 
@@ -116,12 +116,12 @@ class ReportsPage(QtWidgets.QWidget):
                     writer.writerow(
                         [
                             "ID",
-                            "User",
-                            "Gauge Length (mm)",
-                            "Initial Distance (mm)",
-                            "Final Distance (mm)",
+                            "Username",
+                            "Gauge Length",
+                            "Initial Distance",
+                            "Final Distance",
                             "Strain",
-                            "Date"
+                            "Created At"
                         ]
                     )
                     for r in reports:
@@ -130,7 +130,7 @@ class ReportsPage(QtWidgets.QWidget):
                 QtWidgets.QMessageBox.information(
                     self,
                     "Success",
-                    f"Reports exported successfully to:\n{fileName}"
+                    "CSV exported successfully"
                 )
 
         except Exception as e:

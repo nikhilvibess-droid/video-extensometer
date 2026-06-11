@@ -327,6 +327,7 @@ class MainWindow(QtWidgets.QWidget):
         """
         Stop real-time tracking.
         """
+        print("[STOP TRACKING CALLED]")
         if self.tracking:
             try:
                 username = "Unknown"
@@ -348,7 +349,6 @@ class MainWindow(QtWidgets.QWidget):
                     final_distance=final_distance,
                     strain=strain
                 )
-                print("[REPORT SAVED]")
             except Exception as e:
                 print(f"[ERROR] Failed to automatically save report: {e}")
 
