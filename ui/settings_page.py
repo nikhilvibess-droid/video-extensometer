@@ -17,7 +17,7 @@ class SettingsPage(QtWidgets.QWidget):
 
         # Page Title
         title = QtWidgets.QLabel("Settings & Database Administration")
-        title.setStyleSheet("font-size: 20px; font-weight: bold; color: #1e293b;")
+        title.setStyleSheet("font-size: 20px; font-weight: bold; color: #f8fafc;")
         layout.addWidget(title)
 
         # Info Section Card
@@ -25,8 +25,8 @@ class SettingsPage(QtWidgets.QWidget):
         info_card.setObjectName("infoCard")
         info_card.setStyleSheet("""
             QFrame#infoCard {
-                background-color: #ffffff;
-                border: 1px solid #e2e8f0;
+                background-color: #1e293b;
+                border: 1px solid #334155;
                 border-radius: 8px;
             }
         """)
@@ -38,25 +38,25 @@ class SettingsPage(QtWidgets.QWidget):
 
         # Section Header
         sec_header = QtWidgets.QLabel("Database Information")
-        sec_header.setStyleSheet("font-size: 14px; font-weight: bold; color: #475569; margin-bottom: 8px;")
+        sec_header.setStyleSheet("font-size: 14px; font-weight: bold; color: #94a3b8; margin-bottom: 8px;")
         info_layout.addRow(sec_header)
 
         self.path_val = QtWidgets.QLabel("-")
-        self.path_val.setStyleSheet("font-size: 13px; color: #0f172a;")
+        self.path_val.setStyleSheet("font-size: 13px; color: #f8fafc;")
         self.path_val.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
 
         self.size_val = QtWidgets.QLabel("-")
-        self.size_val.setStyleSheet("font-size: 13px; color: #0f172a;")
+        self.size_val.setStyleSheet("font-size: 13px; color: #f8fafc;")
 
         self.users_val = QtWidgets.QLabel("-")
-        self.users_val.setStyleSheet("font-size: 13px; color: #0f172a;")
+        self.users_val.setStyleSheet("font-size: 13px; color: #f8fafc;")
 
         self.reports_val = QtWidgets.QLabel("-")
-        self.reports_val.setStyleSheet("font-size: 13px; color: #0f172a;")
+        self.reports_val.setStyleSheet("font-size: 13px; color: #f8fafc;")
 
         def create_form_label(text):
             label = QtWidgets.QLabel(text)
-            label.setStyleSheet("font-size: 13px; color: #64748b; font-weight: bold;")
+            label.setStyleSheet("font-size: 13px; color: #94a3b8; font-weight: bold;")
             return label
 
         info_layout.addRow(create_form_label("Database Path:"), self.path_val)
@@ -72,8 +72,8 @@ class SettingsPage(QtWidgets.QWidget):
         actions_card.setObjectName("actionsCard")
         actions_card.setStyleSheet("""
             QFrame#actionsCard {
-                background-color: #ffffff;
-                border: 1px solid #e2e8f0;
+                background-color: #1e293b;
+                border: 1px solid #334155;
                 border-radius: 8px;
             }
         """)
@@ -83,7 +83,7 @@ class SettingsPage(QtWidgets.QWidget):
         actions_layout.setSpacing(16)
 
         actions_header = QtWidgets.QLabel("Database Backup & Restore")
-        actions_header.setStyleSheet("font-size: 14px; font-weight: bold; color: #475569;")
+        actions_header.setStyleSheet("font-size: 14px; font-weight: bold; color: #94a3b8;")
         actions_layout.addWidget(actions_header)
 
         btn_layout = QtWidgets.QHBoxLayout()

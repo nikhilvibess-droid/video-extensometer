@@ -76,10 +76,44 @@ class MainWindow(QtWidgets.QWidget):
 
         layout.addLayout(control_layout)
 
-        # Results display
-        self.result_label = QtWidgets.QLabel("Strain: 0.000000 | Status: Idle")
-        self.result_label.setStyleSheet("font-size: 14px; font-weight: bold;")
-        layout.addWidget(self.result_label)
+        # Results display — three high-contrast HUD labels
+        results_panel = QtWidgets.QFrame()
+        results_panel.setStyleSheet(
+            "background-color: #0f172a;"
+            "border: 1px solid #334155;"
+            "border-radius: 6px;"
+            "padding: 6px;"
+        )
+        results_layout = QtWidgets.QHBoxLayout(results_panel)
+        results_layout.setContentsMargins(16, 10, 16, 10)
+        results_layout.setSpacing(40)
+
+        self.strain_label = QtWidgets.QLabel("Strain\n+0.000000")
+        self.strain_label.setStyleSheet(
+            "font-size: 15px; font-weight: bold; color: #fbbf24;"
+            "letter-spacing: 0.5px;"
+        )
+        self.strain_label.setAlignment(QtCore.Qt.AlignCenter)
+
+        self.dist_label = QtWidgets.QLabel("Distance\n0.00 mm")
+        self.dist_label.setStyleSheet(
+            "font-size: 15px; font-weight: bold; color: #38bdf8;"
+            "letter-spacing: 0.5px;"
+        )
+        self.dist_label.setAlignment(QtCore.Qt.AlignCenter)
+
+        self.status_label = QtWidgets.QLabel("Status\nIdle")
+        self.status_label.setStyleSheet(
+            "font-size: 15px; font-weight: bold; color: #94a3b8;"
+            "letter-spacing: 0.5px;"
+        )
+        self.status_label.setAlignment(QtCore.Qt.AlignCenter)
+
+        results_layout.addWidget(self.strain_label)
+        results_layout.addWidget(self.dist_label)
+        results_layout.addWidget(self.status_label)
+
+        layout.addWidget(results_panel)
 
         self.setLayout(layout)
 
@@ -431,8 +465,12 @@ class MainWindow(QtWidgets.QWidget):
                 self.current_strain = strain
 
                 # Update results display
-                self.result_label.setText(
-                    f"Strain: {strain:+.6f} | Distance: {mm_dist:.2f} mm | Status: Tracking"
+                self.strain_label.setText(f"Strain\n{strain:+.6f}")
+                self.dist_label.setText(f"Distance\n{mm_dist:.2f} mm")
+                self.status_label.setText("Status\nTracking")
+                self.status_label.setStyleSheet(
+                    "font-size: 15px; font-weight: bold; color: #22c55e;"
+                    "letter-spacing: 0.5px;"
                 )
 
                 # Draw markers (green circles)
@@ -483,8 +521,11 @@ class MainWindow(QtWidgets.QWidget):
                 )
 
             else:
-                self.result_label.setText(
-                    "Strain: 0.000000 | Status: Tracking Loss"
+                self.strain_label.setText("Strain\n+0.000000")
+                self.status_label.setText("Status\nTracking Loss")
+                self.status_label.setStyleSheet(
+                    "font-size: 15px; font-weight: bold; color: #ef4444;"
+                    "letter-spacing: 0.5px;"
                 )
 
         elif self.markers_selected and not self.tracking:
