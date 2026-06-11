@@ -327,6 +327,30 @@ class MainWindow(QtWidgets.QWidget):
         """
         Stop real-time tracking.
         """
+        if self.tracking:
+            try:
+                username = "Unknown"
+                if self.user:
+                    if isinstance(self.user, dict):
+                        username = self.user.get("username", "Unknown")
+                    elif hasattr(self.user, "username"):
+                        username = self.user.username
+
+                gauge_length = self.initial_mm if self.initial_mm is not None else 0.0
+                initial_distance = (self.initial_pixel_distance * self.pixel_to_mm) if (self.initial_pixel_distance is not None and self.pixel_to_mm is not None) else 0.0
+                final_distance = self.current_distance_mm
+                strain = self.current_strain
+
+                self.report_manager.save_report(
+                    username=username,
+                    gauge_length=gauge_length,
+                    initial_distance=initial_distance,
+                    final_distance=final_distance,
+                    strain=strain
+                )
+                print("[REPORT SAVED]")
+            except Exception as e:
+                print(f"[ERROR] Failed to automatically save report: {e}")
 
         self.tracking = False
 

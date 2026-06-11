@@ -3,6 +3,7 @@ from PyQt5 import QtWidgets
 from ui.main_window import MainWindow
 from ui.users_page import UsersPage
 from ui.audit_logs_page import AuditLogsPage
+from ui.reports_page import ReportsPage
 
 
 class DashboardWindow(QtWidgets.QMainWindow):
@@ -64,6 +65,10 @@ class DashboardWindow(QtWidgets.QMainWindow):
             "Tracking"
         )
 
+        self.reports_btn = QtWidgets.QPushButton(
+            "Reports"
+        )
+
         self.users_btn = QtWidgets.QPushButton(
             "Users"
         )
@@ -74,6 +79,10 @@ class DashboardWindow(QtWidgets.QMainWindow):
 
         sidebar.addWidget(
             self.tracking_btn
+        )
+
+        sidebar.addWidget(
+            self.reports_btn
         )
 
         sidebar.addWidget(
@@ -93,6 +102,13 @@ class DashboardWindow(QtWidgets.QMainWindow):
             self.users_btn.hide()
             self.audit_btn.hide()
 
+        if self.role not in [
+            "superadmin",
+            "admin",
+            "engineer"
+        ]:
+            self.reports_btn.hide()
+
         sidebar.addStretch()
 
         layout.addLayout(
@@ -110,12 +126,18 @@ class DashboardWindow(QtWidgets.QMainWindow):
             self.user
         )
 
+        self.reports_page = ReportsPage()
+
         self.users_page = UsersPage()
 
         self.audit_page = AuditLogsPage()
 
         self.pages.addWidget(
             self.tracking_page
+        )
+
+        self.pages.addWidget(
+            self.reports_page
         )
 
         self.pages.addWidget(
@@ -139,6 +161,13 @@ class DashboardWindow(QtWidgets.QMainWindow):
             lambda:
             self.pages.setCurrentWidget(
                 self.tracking_page
+            )
+        )
+
+        self.reports_btn.clicked.connect(
+            lambda:
+            self.pages.setCurrentWidget(
+                self.reports_page
             )
         )
 
