@@ -1,14 +1,21 @@
 from PyQt5 import QtWidgets, QtGui, QtCore
 import cv2
 import numpy as np
-
+import time
 from camera import FLIRCamera
 from tracking import MarkerTracker
 from ui.marker_selection import MarkerSelector
 from database.report_manager import ReportManager
+from database.sample_manager import SampleManager
+from database.audit_manager import AuditManager
+from ui.graph_widget import GraphContainer
+from ui.custom_dialog import CustomDialog
+from datetime import datetime
 
 
 class MainWindow(QtWidgets.QWidget):
+    graph_update_signal = QtCore.pyqtSignal(float, float, float, float, int, str)
+    live_dashboard_signal = QtCore.pyqtSignal(dict)
 
     def __init__(
         self,
@@ -19,17 +26,24 @@ class MainWindow(QtWidgets.QWidget):
         self.user = user
 
         self.report_manager = ReportManager()
+        self.sample_manager = SampleManager()
+        self.audit = AuditManager.get_instance()
 
         self.current_strain = 0.0
 
         self.current_distance_mm = 0.0
+
+        self._selecting_markers = False
+        self._test_completed = False
+        self._frozen_test_seconds = None
+        self._last_dashboard_emit = 0.0
 
         self.setWindowTitle(
             "Video Extensometer - FLIR Blackfly S"
         )
 
         self.resize(
-            1400,
+            1600,
             900
         )
 
@@ -37,91 +51,244 @@ class MainWindow(QtWidgets.QWidget):
         # UI LAYOUT
         # ==================
 
-        layout = QtWidgets.QVBoxLayout()
+        main_layout = QtWidgets.QVBoxLayout()
+        main_layout.setContentsMargins(12, 12, 12, 12)
+        main_layout.setSpacing(12)
 
-        # Video display
+        # Upper Area: Live Camera Feed (60% width) and Live Graphs (40% width)
+        top_layout = QtWidgets.QHBoxLayout()
+        top_layout.setSpacing(12)
+
+        # Left Column: Video display
         self.video_label = QtWidgets.QLabel()
-        self.video_label.setMinimumSize(1200, 800)
-        self.video_label.setStyleSheet(
-            "border: 2px solid #cccccc; background-color: #000000;"
+        self.video_label.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding,
+            QtWidgets.QSizePolicy.Expanding
         )
-        layout.addWidget(self.video_label)
+        self.video_label.setMinimumSize(480, 320)
+        self.video_label.setStyleSheet(
+            "border: 2px solid #334155; background-color: #0f172a; border-radius: 8px;"
+        )
+        self.video_label.setAlignment(QtCore.Qt.AlignCenter)
+        top_layout.addWidget(self.video_label, 60)
 
-        # Control panel
-        control_layout = QtWidgets.QHBoxLayout()
+        # Right Column: Live Graphs (stacked vertically)
+        right_panel = QtWidgets.QWidget()
+        right_panel_layout = QtWidgets.QVBoxLayout(right_panel)
+        right_panel_layout.setContentsMargins(0, 0, 0, 0)
+        right_panel_layout.setSpacing(10)
 
-        # Gauge length input
+        self.strain_graph = GraphContainer(
+            "Strain vs Time", "Strain (%)", "#fbbf24", is_strain_y=True, parent=self
+        )
+        self.dist_graph = GraphContainer(
+            "Distance vs Time", "Distance (mm)", "#38bdf8", is_strain_y=False, parent=self
+        )
+        self.strain_graph.setMinimumHeight(220)
+        self.dist_graph.setMinimumHeight(220)
+
+        right_panel_layout.addWidget(self.strain_graph, 1)
+        right_panel_layout.addWidget(self.dist_graph, 1)
+        top_layout.addWidget(right_panel, 40)
+
+        main_layout.addLayout(top_layout, 3)
+
+        # Bottom Area: Controls & Live HUD Dashboard Panel
+        bottom_panel = QtWidgets.QFrame()
+        bottom_panel.setObjectName("bottomPanel")
+        bottom_panel.setStyleSheet("""
+            QFrame#bottomPanel {
+                background-color: #1e293b;
+                border: 1px solid #334155;
+                border-radius: 8px;
+            }
+        """)
+        bottom_layout = QtWidgets.QHBoxLayout(bottom_panel)
+        bottom_layout.setContentsMargins(16, 12, 16, 12)
+        bottom_layout.setSpacing(24)
+
+        # Bottom Left: Controls Panel Card
+        controls_card = QtWidgets.QFrame()
+        controls_card.setObjectName("controlsCard")
+        controls_card.setStyleSheet("""
+            QFrame#controlsCard {
+                background-color: #0f172a;
+                border: 1px solid #334155;
+                border-radius: 6px;
+            }
+        """)
+        controls_layout = QtWidgets.QVBoxLayout(controls_card)
+        controls_layout.setContentsMargins(12, 8, 12, 8)
+        controls_layout.setSpacing(8)
+
+        # Form layout for inputs
+        inputs_layout = QtWidgets.QFormLayout()
+        inputs_layout.setSpacing(6)
+
+        self.material_input = QtWidgets.QLineEdit("Steel")
+        self.material_input.setPlaceholderText("e.g. Steel, Aluminum")
+        self.material_input.textChanged.connect(self.sync_material_value)
+
+        self.sample_name_input = QtWidgets.QLineEdit()
+        self.sample_name_input.setPlaceholderText("Specimen Name (e.g. Specimen A01)")
+
+        self.test_name_input = QtWidgets.QLineEdit("Tensile Test")
+        self.test_name_input.setPlaceholderText("e.g. Tensile Test")
+
+        self.remarks_input = QtWidgets.QLineEdit()
+        self.remarks_input.setPlaceholderText("Optional remarks")
+
         self.gauge_input = QtWidgets.QLineEdit()
         self.gauge_input.setPlaceholderText("Gauge Length (mm)")
-        self.gauge_input.setMaximumWidth(200)
-        control_layout.addWidget(QtWidgets.QLabel("Gauge Length (mm):"))
-        control_layout.addWidget(self.gauge_input)
+        self.gauge_input.textChanged.connect(self.sync_gauge_value)
 
-        # Capture button
-        self.capture_btn = QtWidgets.QPushButton("Capture & Select Markers")
-        self.capture_btn.setMaximumWidth(200)
-        control_layout.addWidget(self.capture_btn)
+        def make_form_label(text):
+            lbl = QtWidgets.QLabel(text)
+            lbl.setStyleSheet("font-size: 11px; font-weight: bold; color: #94a3b8; text-transform: uppercase;")
+            return lbl
 
-        # Start tracking button
+        inputs_layout.addRow(make_form_label("Material *:"), self.material_input)
+        inputs_layout.addRow(make_form_label("Sample Name *:"), self.sample_name_input)
+        inputs_layout.addRow(make_form_label("Test Name:"), self.test_name_input)
+        inputs_layout.addRow(make_form_label("Remarks:"), self.remarks_input)
+        inputs_layout.addRow(make_form_label("Gauge Length (mm) *:"), self.gauge_input)
+        controls_layout.addLayout(inputs_layout)
+
+        # Buttons
+        btn_layout = QtWidgets.QHBoxLayout()
+        btn_layout.setSpacing(8)
+
+        self.capture_btn = QtWidgets.QPushButton("Capture")
+        self.restart_btn = QtWidgets.QPushButton("Restart Test")
         self.start_btn = QtWidgets.QPushButton("Start Tracking")
-        self.start_btn.setMaximumWidth(150)
+        self.stop_save_btn = QtWidgets.QPushButton("Stop & Save")
+
+        # Generate custom scalable high-contrast vector icons
+        self.capture_btn.setIcon(self.create_camera_icon())
+        self.restart_btn.setIcon(self.create_refresh_icon())
+        self.start_btn.setIcon(self.create_play_icon())
+        self.stop_save_btn.setIcon(self.create_stop_icon())
+
+        icon_size = QtCore.QSize(16, 16)
+        self.capture_btn.setIconSize(icon_size)
+        self.restart_btn.setIconSize(icon_size)
+        self.start_btn.setIconSize(icon_size)
+        self.stop_save_btn.setIconSize(icon_size)
+
         self.start_btn.setEnabled(False)
-        control_layout.addWidget(self.start_btn)
+        self.stop_save_btn.setEnabled(False)
 
-        # Stop tracking button
-        self.stop_btn = QtWidgets.QPushButton("Stop Tracking")
-        self.stop_btn.setMaximumWidth(150)
-        self.stop_btn.setEnabled(False)
-        control_layout.addWidget(self.stop_btn)
+        # Style buttons with modern theme colors and professional hover animations
+        self.capture_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3b82f6; color: white; border: none; border-radius: 6px; padding: 8px 16px; font-weight: bold; font-size: 12px; min-height: 28px;
+            }
+            QPushButton:hover { background-color: #2563eb; }
+            QPushButton:pressed { background-color: #1d4ed8; }
+            QPushButton:disabled { background-color: #1e293b; color: #64748b; border: 1px solid #334155; }
+        """)
+        self.restart_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f97316; color: white; border: none; border-radius: 6px; padding: 8px 16px; font-weight: bold; font-size: 12px; min-height: 28px;
+            }
+            QPushButton:hover { background-color: #ea580c; }
+            QPushButton:pressed { background-color: #c2410c; }
+            QPushButton:disabled { background-color: #1e293b; color: #64748b; border: 1px solid #334155; }
+        """)
+        self.start_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #22c55e; color: white; border: none; border-radius: 6px; padding: 8px 16px; font-weight: bold; font-size: 12px; min-height: 28px;
+            }
+            QPushButton:hover { background-color: #16a34a; }
+            QPushButton:pressed { background-color: #15803d; }
+            QPushButton:disabled { background-color: #1e293b; color: #64748b; border: 1px solid #334155; }
+        """)
+        self.stop_save_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #ef4444; color: white; border: none; border-radius: 6px; padding: 8px 16px; font-weight: bold; font-size: 12px; min-height: 28px;
+            }
+            QPushButton:hover { background-color: #dc2626; }
+            QPushButton:pressed { background-color: #b91c1c; }
+            QPushButton:disabled { background-color: #1e293b; color: #64748b; border: 1px solid #334155; }
+        """)
 
-        layout.addLayout(control_layout)
+        btn_layout.addWidget(self.capture_btn)
+        btn_layout.addWidget(self.restart_btn)
+        btn_layout.addWidget(self.start_btn)
+        btn_layout.addWidget(self.stop_save_btn)
+        controls_layout.addLayout(btn_layout)
 
-        # Results display — three high-contrast HUD labels
-        results_panel = QtWidgets.QFrame()
-        results_panel.setStyleSheet(
-            "background-color: #0f172a;"
-            "border: 1px solid #334155;"
-            "border-radius: 6px;"
-            "padding: 6px;"
-        )
-        results_layout = QtWidgets.QHBoxLayout(results_panel)
-        results_layout.setContentsMargins(16, 10, 16, 10)
-        results_layout.setSpacing(40)
+        bottom_layout.addWidget(controls_card, 40)
 
-        self.strain_label = QtWidgets.QLabel("Strain\n+0.000000")
-        self.strain_label.setStyleSheet(
-            "font-size: 15px; font-weight: bold; color: #fbbf24;"
-            "letter-spacing: 0.5px;"
-        )
-        self.strain_label.setAlignment(QtCore.Qt.AlignCenter)
+        # Bottom Right: Info Grid Card (Live HUD Dashboard)
+        info_card = QtWidgets.QFrame()
+        info_card.setObjectName("infoCard")
+        info_card.setStyleSheet("""
+            QFrame#infoCard {
+                background-color: #0f172a;
+                border: 1px solid #334155;
+                border-radius: 6px;
+            }
+        """)
+        info_layout = QtWidgets.QVBoxLayout(info_card)
+        info_layout.setContentsMargins(12, 8, 12, 8)
+        info_layout.setSpacing(6)
 
-        self.dist_label = QtWidgets.QLabel("Distance\n0.00 mm")
-        self.dist_label.setStyleSheet(
-            "font-size: 15px; font-weight: bold; color: #38bdf8;"
-            "letter-spacing: 0.5px;"
-        )
-        self.dist_label.setAlignment(QtCore.Qt.AlignCenter)
+        info_title = QtWidgets.QLabel("CURRENT TEST INFORMATION")
+        info_title.setStyleSheet("font-size: 11px; font-weight: bold; color: #38bdf8; letter-spacing: 0.5px;")
+        info_layout.addWidget(info_title)
 
-        self.status_label = QtWidgets.QLabel("Status\nIdle")
-        self.status_label.setStyleSheet(
-            "font-size: 15px; font-weight: bold; color: #94a3b8;"
-            "letter-spacing: 0.5px;"
-        )
-        self.status_label.setAlignment(QtCore.Qt.AlignCenter)
+        grid = QtWidgets.QGridLayout()
+        grid.setSpacing(8)
 
-        results_layout.addWidget(self.strain_label)
-        results_layout.addWidget(self.dist_label)
-        results_layout.addWidget(self.status_label)
+        def add_hud_field(grid, label_text, row, col, val_color="#f8fafc", val_size="14px"):
+            lbl = QtWidgets.QLabel(label_text)
+            lbl.setStyleSheet("font-size: 10px; font-weight: bold; color: #64748b; text-transform: uppercase;")
+            
+            val = QtWidgets.QLabel("—")
+            val.setStyleSheet(f"font-size: {val_size}; font-weight: bold; color: {val_color};")
+            
+            grid.addWidget(lbl, row * 2, col)
+            grid.addWidget(val, row * 2 + 1, col)
+            return val
 
-        layout.addWidget(results_panel)
+        # Grid column layouts
+        self.hud_material = add_hud_field(grid, "Material", 0, 0)
+        self.hud_gauge = add_hud_field(grid, "Gauge Length", 0, 1)
+        self.hud_user = add_hud_field(grid, "Current User", 0, 2)
 
-        self.setLayout(layout)
+        self.hud_init_dist = add_hud_field(grid, "Initial Distance", 1, 0, val_color="#38bdf8")
+        self.hud_curr_dist = add_hud_field(grid, "Current Distance", 1, 1, val_color="#38bdf8")
+        self.hud_extension = add_hud_field(grid, "Extension", 1, 2, val_color="#38bdf8")
+
+        self.hud_strain = add_hud_field(grid, "Current Strain", 2, 0, val_color="#fbbf24", val_size="15px")
+        self.hud_fps = add_hud_field(grid, "Camera FPS", 2, 1, val_color="#fbbf24")
+        self.hud_status = add_hud_field(grid, "Tracking Status", 2, 2, val_color="#94a3b8")
+
+        info_layout.addLayout(grid)
+        bottom_layout.addWidget(info_card, 60)
+
+        main_layout.addWidget(bottom_panel, 1)
+        self.setLayout(main_layout)
 
         # ==================
         # CAMERA & TRACKER
         # ==================
 
-        self.camera = FLIRCamera()
+        self.camera = None
+        try:
+            self.camera = FLIRCamera()
+        except Exception as exc:
+            print(f"[CAMERA] Initialization failed: {exc}")
+            CustomDialog.warning(
+                self,
+                "Camera Unavailable",
+                "FLIR camera could not be started.",
+                description=(
+                    "The application will open without live video. "
+                    "Reconnect the camera, then restart the application."
+                ),
+            )
         self.tracker = MarkerTracker()
         self.selector = MarkerSelector()
 
@@ -141,6 +308,28 @@ class MainWindow(QtWidgets.QWidget):
         self.markers_selected = False           # Markers selected state
         self.current_markers = None             # Current marker positions
 
+        # FPS and Real-time Plotting state
+        self.fps_last_time = None
+        self.fps_smoothed = 0.0
+        self.start_time = None
+        self.time_data = []
+        self.strain_data = []
+        self.distance_data = []
+        self.frame_count = 0
+
+        # ==================
+        # INITIALIZE HUD VALUES
+        # ==================
+        username = "Unknown"
+        if self.user:
+            if isinstance(self.user, dict):
+                username = self.user.get("username", "Unknown")
+            elif hasattr(self.user, "username"):
+                username = self.user.username
+        self.hud_user.setText(username)
+        self.hud_material.setText(self.material_input.text())
+        self.hud_status.setText("Idle")
+
         # ==================
         # TIMER
         # ==================
@@ -154,8 +343,28 @@ class MainWindow(QtWidgets.QWidget):
         # ==================
 
         self.capture_btn.clicked.connect(self.capture_image)
+        self.restart_btn.clicked.connect(self.restart_test)
         self.start_btn.clicked.connect(self.start_tracking)
-        self.stop_btn.clicked.connect(self.stop_tracking)
+        self.stop_save_btn.clicked.connect(self.stop_and_save)
+        self.graph_update_signal.connect(self.handle_graph_update)
+
+        self._emit_dashboard_update()
+
+    # ==================
+    # INPUT VALUE SYNC
+    # ==================
+
+    def sync_material_value(self, text):
+        if text.strip():
+            self.hud_material.setText(text.strip())
+        else:
+            self.hud_material.setText("—")
+
+    def sync_gauge_value(self, text):
+        if text.strip():
+            self.hud_gauge.setText(f"{text.strip()} mm")
+        else:
+            self.hud_gauge.setText("—")
 
     # ==================
     # CAPTURE & SELECTION
@@ -164,39 +373,21 @@ class MainWindow(QtWidgets.QWidget):
     def capture_image(self):
         """
         Capture current frame, freeze it, and let user select markers with confirmation.
-        
-        PROFESSIONAL WORKFLOW:
-        1. Capture frame from camera
-        2. Resize to 40% for comfortable marker selection window
-        3. Display marker selection interface with real-time visual feedback
-        4. User clicks P1 location → Green circle appears (P1)
-        5. User clicks P2 location → Green circle appears (P2)
-        6. Blue gauge line drawn between markers
-        7. Pixel distance and coordinates displayed
-        8. User presses ENTER to confirm (or ESC to re-select)
-        9. Points scaled back to original camera resolution
-        10. Tracking initialization with confirmed markers
-        
-        Returns: None (updates self.current_markers and self.markers_selected)
         """
-        ok, frame = self.camera.read()
+        ok, frame = self.camera.read() if self.camera else (False, None)
 
         if not ok:
-            QtWidgets.QMessageBox.warning(
+            CustomDialog.critical(
                 self,
                 "Camera Error",
-                "Failed to capture frame from FLIR camera"
+                "Failed to capture frame from FLIR camera.",
+                description="Ensure the FLIR Blackfly S camera is connected and powered on."
             )
             return
 
-        # Store frozen frame (already writable from camera.read())
         self.frozen_frame = frame.copy()
-        
-        # Get original resolution for coordinate scaling
         original_height, original_width = self.frozen_frame.shape[:2]
 
-        # Resize for comfortable marker selection window (40% scale)
-        # This allows easier clicking while reducing window size
         display = cv2.resize(
             self.frozen_frame,
             None,
@@ -211,36 +402,35 @@ class MainWindow(QtWidgets.QWidget):
         print(f"[CAPTURE] Display resolution: {display_width}x{display_height} (40% scale)")
         print(f"[CAPTURE] Starting professional marker selection...\n")
 
-        # Display marker selection interface
-        # User clicks to place P1 and P2, sees real-time visual feedback
-        points_scaled = self.selector.select(display)
+        self._selecting_markers = True
+        self._emit_dashboard_update()
 
-        # Handle cancellation (empty list returned when user presses ESC)
+        try:
+            points_scaled = self.selector.select(display)
+        finally:
+            self._selecting_markers = False
+
         if len(points_scaled) == 0:
             print("[MARKER SELECTION] User cancelled - returning to live feed")
-            QtWidgets.QMessageBox.information(
+            CustomDialog.information(
                 self,
                 "Selection Cancelled",
-                "Marker selection cancelled.\n\n"
-                "Live feed will resume.\n"
-                "Click 'Capture & Select Markers' again to try again."
+                "Marker selection cancelled.",
+                description="Live feed will resume. Click 'Capture' again to try again."
             )
+            self._emit_dashboard_update()
             return
 
-        # Verify we have exactly 2 points
         if len(points_scaled) != 2:
-            QtWidgets.QMessageBox.warning(
+            CustomDialog.warning(
                 self,
                 "Selection Error",
-                f"Invalid selection: {len(points_scaled)} markers selected.\n\n"
-                "Please select exactly 2 markers and press ENTER."
+                f"Invalid selection: {len(points_scaled)} markers selected.",
+                description="Please select exactly 2 markers and press ENTER."
             )
             return
 
-        # ===== CRITICAL: Scale points back to original camera resolution =====
-        # Points were clicked on 40% scaled image
-        # Must scale back by 1/0.4 = 2.5 to match original frame resolution
-        scale_factor = 1.0 / 0.4  # = 2.5
+        scale_factor = 1.0 / 0.4
         
         points = [
             (
@@ -254,58 +444,44 @@ class MainWindow(QtWidgets.QWidget):
         print(f"[COORDINATE SCALING] P1 (40%): {points_scaled[0]} → P1 (original): {points[0]}")
         print(f"[COORDINATE SCALING] P2 (40%): {points_scaled[1]} → P2 (original): {points[1]}")
 
-        # Verify coordinates are within image bounds
         for i, (x, y) in enumerate(points):
             if not (0 <= x < original_width and 0 <= y < original_height):
-                QtWidgets.QMessageBox.warning(
+                CustomDialog.warning(
                     self,
                     "Out of Bounds",
-                    f"Marker P{i+1} is outside image bounds after scaling.\n\n"
-                    f"P{i+1}: ({x}, {y})\n"
-                    f"Image size: {original_width}x{original_height}\n\n"
-                    "Please re-select markers within the visible frame."
+                    f"Marker P{i+1} is outside image bounds after scaling.",
+                    description=f"P{i+1}: ({x}, {y})\nImage size: {original_width}x{original_height}\n\nPlease re-select markers within the visible frame."
                 )
                 return
 
-        # Initialize tracker with confirmed marker points (at original resolution)
         self.tracker.initialize(points)
         self.current_markers = points
 
-        # Calculate initial pixel distance for calibration
-        # This distance in pixels will be converted to mm based on gauge length
         self.initial_pixel_distance = self.tracker.distance(
             points[0],
             points[1]
         )
 
-        # Mark as ready for tracking
         self.markers_selected = True
-
-        # Enable start button for tracking
         self.start_btn.setEnabled(True)
 
-        # Console output for verification
+        # Update HUD to state visual details
+        self.hud_init_dist.setText(f"{self.initial_pixel_distance:.1f} px")
+        self.hud_status.setText("Ready")
+        self.hud_status.setStyleSheet("font-size: 15px; font-weight: bold; color: #3b82f6;")
+
         print(f"\n[MARKER CONFIRMATION] ✓ Successfully confirmed 2 markers")
         print(f"[MARKER POSITIONS] P1 (original res): {points[0]}")
         print(f"[MARKER POSITIONS] P2 (original res): {points[1]}")
         print(f"[INITIAL CALIBRATION] Pixel distance: {self.initial_pixel_distance:.2f} px\n")
 
-        # Show confirmation dialog with exact coordinates and distance
-        QtWidgets.QMessageBox.information(
+        CustomDialog.success(
             self,
-            "✓ Markers Successfully Confirmed",
-            f"Professional marker selection complete.\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"Marker P1 (gauge point 1): {points[0]}\n"
-            f"Marker P2 (gauge point 2): {points[1]}\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"Pixel Distance: {self.initial_pixel_distance:.2f} px\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"Next Steps:\n"
-            f"1. Enter gauge length (mm) in the input field\n"
-            f"2. Click 'Start Tracking' to begin measurement\n"
-            f"3. System will calculate strain in real-time"
+            "Markers Successfully Confirmed",
+            "Professional marker selection complete.",
+            description=f"Marker P1: {points[0]}\nMarker P2: {points[1]}\nPixel Distance: {self.initial_pixel_distance:.2f} px\n\nNext Steps:\n1. Enter gauge length (mm)\n2. Click 'Start Tracking' to begin measurement"
         )
+        self._emit_dashboard_update()
 
     # ==================
     # TRACKING CONTROL
@@ -315,13 +491,32 @@ class MainWindow(QtWidgets.QWidget):
         """
         Start real-time marker tracking with strain calculation.
         """
+        material = self.material_input.text().strip()
+        sample_name = self.sample_name_input.text().strip()
+
+        if not material:
+            CustomDialog.warning(
+                self,
+                "Input Error",
+                "Material is a required field."
+            )
+            return
+
+        if not sample_name:
+            CustomDialog.warning(
+                self,
+                "Input Error",
+                "Sample Name is a required field."
+            )
+            return
+
         try:
             self.initial_mm = float(
                 self.gauge_input.text()
             )
 
         except ValueError:
-            QtWidgets.QMessageBox.warning(
+            CustomDialog.warning(
                 self,
                 "Input Error",
                 "Gauge length must be a valid number (mm)"
@@ -329,7 +524,7 @@ class MainWindow(QtWidgets.QWidget):
             return
 
         if self.initial_pixel_distance is None:
-            QtWidgets.QMessageBox.warning(
+            CustomDialog.warning(
                 self,
                 "Error",
                 "Please select markers first"
@@ -337,34 +532,78 @@ class MainWindow(QtWidgets.QWidget):
             return
 
         if self.initial_mm <= 0:
-            QtWidgets.QMessageBox.warning(
+            CustomDialog.warning(
                 self,
                 "Input Error",
                 "Gauge length must be positive"
             )
             return
 
-        # Calculate calibration factor
         self.pixel_to_mm = (
             self.initial_mm /
             self.initial_pixel_distance
         )
 
+        # Reset plots and lists for a fresh test run
+        self.time_data = []
+        self.strain_data = []
+        self.distance_data = []
+        self.frame_count = 0
+        self.strain_graph.clear()
+        self.dist_graph.clear()
+        self.start_time = time.time()
+        self._test_completed = False
+        self._frozen_test_seconds = None
+        self.sample_manager.start_session()
+
         self.tracking = True
         self.capture_btn.setEnabled(False)
         self.start_btn.setEnabled(False)
-        self.stop_btn.setEnabled(True)
+        self.stop_save_btn.setEnabled(True)
+
+        self.hud_init_dist.setText(f"{self.initial_mm:.2f} mm")
+        self.hud_status.setText("Tracking")
+        self.hud_status.setStyleSheet("font-size: 15px; font-weight: bold; color: #22c55e;")
 
         print(f"[TRACKING START] Calibration: {self.pixel_to_mm:.6f} mm/px")
 
-    def stop_tracking(self):
+        actor = ""
+        actor_role = ""
+        if self.user and isinstance(self.user, dict):
+            actor = self.user.get("username", "")
+            actor_role = self.user.get("role", "")
+        self.audit.log_event(
+            action="Tracking Started",
+            username=actor,
+            role=actor_role,
+            result="Success",
+        )
+        self._emit_dashboard_update(force=True)
+
+    def stop_and_save(self):
         """
-        Stop real-time tracking.
+        Stop real-time tracking, save the report details to the database,
+        refresh dashboard/reports widgets, and prompt for immediate PDF generation.
         """
-        print("[STOP TRACKING CALLED]")
+        print("[STOP & SAVE CALLED]")
+        report_id = None
+        username = "Unknown"
+        gauge_length = 0.0
+        initial_distance = 0.0
+        final_distance = 0.0
+        strain = 0.0
+        material = ""
+        sample_name = ""
+        test_name = ""
+        remarks = ""
+        camera_res = "Unknown"
+        software_version = "v2.5.0-industrial"
+        operator = "Unknown"
+
         if self.tracking:
+            if self.start_time is not None:
+                self._frozen_test_seconds = time.time() - self.start_time
             try:
-                username = "Unknown"
                 if self.user:
                     if isinstance(self.user, dict):
                         username = self.user.get("username", "Unknown")
@@ -376,29 +615,175 @@ class MainWindow(QtWidgets.QWidget):
                 final_distance = self.current_distance_mm
                 strain = self.current_strain
 
-                self.report_manager.save_report(
+                material = self.material_input.text().strip()
+                sample_name = self.sample_name_input.text().strip()
+                test_name = self.test_name_input.text().strip() or "Tensile Test"
+                remarks = self.remarks_input.text().strip()
+                
+                # Determine camera resolution
+                if self.frozen_frame is not None:
+                    h_f, w_f = self.frozen_frame.shape[:2]
+                    camera_res = f"{w_f}x{h_f}"
+                
+                operator = username  # default to current logged-in user
+
+                report_id = self.report_manager.save_report(
                     username=username,
                     gauge_length=gauge_length,
                     initial_distance=initial_distance,
                     final_distance=final_distance,
-                    strain=strain
+                    strain=strain,
+                    material=material,
+                    sample_name=sample_name,
+                    test_name=test_name,
+                    operator=operator,
+                    remarks=remarks,
+                    camera_resolution=camera_res,
+                    software_version=software_version
                 )
+                if report_id:
+                    self.sample_manager.flush_to_report(report_id)
             except Exception as e:
-                print(f"[ERROR] Failed to automatically save report: {e}")
+                self.sample_manager.discard_session()
+                print(f"[ERROR] Failed to save report: {e}")
+                CustomDialog.critical(self, "Save Error", "Failed to save test report.", details=str(e))
+        else:
+            self.sample_manager.discard_session()
 
         self.tracking = False
-
+        self._test_completed = True
         self.capture_btn.setEnabled(True)
+        self.restart_btn.setEnabled(True)
+        self.start_btn.setEnabled(False) # Force re-capture for the next test
+        self.stop_save_btn.setEnabled(False)
 
-        self.start_btn.setEnabled(
-            self.markers_selected
+        # Clear marker select flags so user must select new markers for a new test
+        self.markers_selected = False
+        self.current_markers = None
+
+        self.hud_status.setText("Stopped")
+        self.hud_status.setStyleSheet("font-size: 15px; font-weight: bold; color: #ef4444;")
+
+        print("[TRACKING STOP] Tracking halted and report successfully saved")
+
+        actor = ""
+        actor_role = ""
+        if self.user and isinstance(self.user, dict):
+            actor = self.user.get("username", "")
+            actor_role = self.user.get("role", "")
+        if report_id:
+            self.audit.log_event(
+                action="Report Generated",
+                username=actor,
+                role=actor_role,
+                result="Success",
+                details=f"Report ID {report_id}",
+            )
+        self.audit.log_event(
+            action="Tracking Stopped",
+            username=actor,
+            role=actor_role,
+            result="Success",
         )
 
-        self.stop_btn.setEnabled(False)
+        # Refresh Reports page & Dashboard statistics
+        parent = self.window()
+        if hasattr(parent, "update_stats"):
+            parent.update_stats()
+        if hasattr(parent, "reports_page") and parent.reports_page:
+            if hasattr(parent.reports_page, "load_reports"):
+                parent.reports_page.load_reports()
 
-        print(
-            "[TRACKING STOP] Tracking halted by user"
-        )
+        # Prompt user to generate PDF if saved successfully
+        if report_id:
+            reply = CustomDialog.question(
+                self,
+                "Generate PDF Report",
+                "Test completed and report saved successfully.",
+                description="Would you like to export the PDF Metrology Analysis Report now?",
+                buttons=["Yes", "No"],
+                default_button="Yes"
+            )
+            if reply == CustomDialog.Yes:
+                if hasattr(parent, "reports_page") and parent.reports_page:
+                    report_data = {
+                        'id': report_id,
+                        'username': username,
+                        'gauge_length': gauge_length,
+                        'initial_distance': initial_distance,
+                        'final_distance': final_distance,
+                        'strain': strain,
+                        'created_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        'material': material,
+                        'sample_name': sample_name,
+                        'test_name': test_name,
+                        'operator': operator,
+                        'remarks': remarks,
+                        'camera_resolution': camera_res,
+                        'software_version': software_version
+                    }
+                    parent.reports_page.render_report_pdf(report_data)
+
+        self._emit_dashboard_update(force=True)
+
+    def _format_test_time(self, seconds):
+        total = max(0, int(seconds or 0))
+        hours = total // 3600
+        minutes = (total % 3600) // 60
+        secs = total % 60
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+    def _get_test_time_seconds(self):
+        if self.tracking and self.start_time is not None:
+            return time.time() - self.start_time
+        if self._frozen_test_seconds is not None:
+            return self._frozen_test_seconds
+        return 0.0
+
+    def _get_extension_mm(self):
+        if self.initial_mm is None:
+            return 0.0
+        return self.current_distance_mm - self.initial_mm
+
+    def _resolve_tracking_status(self):
+        if self._selecting_markers:
+            return "Selecting Markers"
+        if self.tracking:
+            if self.hud_status.text() == "Tracking Loss":
+                return "Error"
+            return "Tracking"
+        if self._test_completed:
+            return "Completed"
+        if self.markers_selected:
+            return "Ready"
+        if self.camera is not None:
+            return "Ready"
+        return "Idle"
+
+    def _emit_dashboard_update(self, force=False):
+        now = time.time()
+        extension = self._get_extension_mm()
+        if not force and self.tracking:
+            ext_changed = abs(
+                extension - getattr(self, "_last_ext_emit", -999.0)
+            ) > 0.0005
+            sec = int(self._get_test_time_seconds())
+            sec_changed = sec != getattr(self, "_last_sec_emit", -1)
+            if (
+                not ext_changed
+                and not sec_changed
+                and (now - self._last_dashboard_emit) < 0.5
+            ):
+                return
+            self._last_ext_emit = extension
+            self._last_sec_emit = sec
+
+        self._last_dashboard_emit = now
+        self.live_dashboard_signal.emit({
+            "test_time": self._format_test_time(self._get_test_time_seconds()),
+            "extension_mm": extension,
+            "status": self._resolve_tracking_status(),
+        })
 
     # ==================
     # FRAME UPDATE (Main Loop)
@@ -411,20 +796,27 @@ class MainWindow(QtWidgets.QWidget):
         2. If tracking: run optical flow on markers
         3. Draw overlays (markers, gauge line, strain)
         4. Display in PyQt5 label
-        
-        CRITICAL: Frame from camera.read() is already writable (copied in camera.py)
         """
-        ok, frame = self.camera.read()
+        # Smooth actual rolling FPS calculation
+        now = time.time()
+        if self.fps_last_time is not None:
+            dt = now - self.fps_last_time
+            if dt > 0:
+                fps = 1.0 / dt
+                self.fps_smoothed = 0.9 * self.fps_smoothed + 0.1 * fps
+        else:
+            self.fps_smoothed = 33.3
+        self.fps_last_time = now
+        self.hud_fps.setText(f"{self.fps_smoothed:.1f} FPS")
+
+        ok, frame = self.camera.read() if self.camera else (False, None)
 
         if not ok:
             return
 
-        # Ensure frame is writable (defensive programming)
-        # This should always pass due to copy in camera.read(), but safety first
         if not frame.flags.writeable:
             frame = frame.copy()
 
-        # Convert to grayscale for tracking
         gray = cv2.cvtColor(
             frame,
             cv2.COLOR_BGR2GRAY
@@ -435,7 +827,6 @@ class MainWindow(QtWidgets.QWidget):
         # ==================
 
         if self.tracking and self.old_gray is not None:
-            # Run optical flow tracking
             points = self.tracker.track(
                 self.old_gray,
                 gray
@@ -445,33 +836,36 @@ class MainWindow(QtWidgets.QWidget):
                 pt1 = tuple(points[0].astype(int))
                 pt2 = tuple(points[1].astype(int))
 
-                # Update marker positions
                 self.current_markers = [pt1, pt2]
 
-                # Calculate distances and strain
                 pixel_dist = self.tracker.distance(
                     pt1,
                     pt2
                 )
 
                 mm_dist = pixel_dist * self.pixel_to_mm
-
                 strain = (mm_dist - self.initial_mm) / self.initial_mm
+                ext = mm_dist - self.initial_mm
 
                 self.current_pixel_distance = pixel_dist
-
                 self.current_distance_mm = mm_dist
-
                 self.current_strain = strain
 
-                # Update results display
-                self.strain_label.setText(f"Strain\n{strain:+.6f}")
-                self.dist_label.setText(f"Distance\n{mm_dist:.2f} mm")
-                self.status_label.setText("Status\nTracking")
-                self.status_label.setStyleSheet(
-                    "font-size: 15px; font-weight: bold; color: #22c55e;"
-                    "letter-spacing: 0.5px;"
-                )
+                # Update HUD variables
+                self.hud_curr_dist.setText(f"{mm_dist:.2f} mm")
+                self.hud_extension.setText(f"{ext:+.2f} mm")
+                self.hud_strain.setText(f"{strain:+.6f}")
+                self.hud_status.setText("Tracking")
+                self.hud_status.setStyleSheet("font-size: 15px; font-weight: bold; color: #22c55e;")
+
+                # Emit Graph Update Signal directly from tracking frame
+                if self.start_time is not None:
+                    self.frame_count += 1
+                    timestamp = time.time()
+                    elapsed = timestamp - self.start_time
+                    self.graph_update_signal.emit(timestamp, elapsed, mm_dist, strain, self.frame_count, "Tracking")
+
+                self._emit_dashboard_update()
 
                 # Draw markers (green circles)
                 cv2.circle(
@@ -521,24 +915,22 @@ class MainWindow(QtWidgets.QWidget):
                 )
 
             else:
-                self.strain_label.setText("Strain\n+0.000000")
-                self.status_label.setText("Status\nTracking Loss")
-                self.status_label.setStyleSheet(
+                self.hud_strain.setText("+0.000000")
+                self.hud_status.setText("Tracking Loss")
+                self.hud_status.setStyleSheet(
                     "font-size: 15px; font-weight: bold; color: #ef4444;"
-                    "letter-spacing: 0.5px;"
                 )
+                self._emit_dashboard_update(force=True)
 
         elif self.markers_selected and not self.tracking:
-            # Display selected markers visually (waiting for tracking to start)
             if self.current_markers and len(self.current_markers) == 2:
                 pt1, pt2 = self.current_markers
 
-                # Draw filled green circles for markers
                 cv2.circle(
                     frame,
                     pt1,
                     15,
-                    (0, 255, 0),  # Green
+                    (0, 255, 0),
                     -1
                 )
                 
@@ -546,16 +938,15 @@ class MainWindow(QtWidgets.QWidget):
                     frame,
                     pt2,
                     15,
-                    (0, 255, 0),  # Green
+                    (0, 255, 0),
                     -1
                 )
 
-                # Draw white contours for emphasis
                 cv2.circle(
                     frame,
                     pt1,
                     15,
-                    (255, 255, 255),  # White border
+                    (255, 255, 255),
                     2
                 )
                 
@@ -563,20 +954,18 @@ class MainWindow(QtWidgets.QWidget):
                     frame,
                     pt2,
                     15,
-                    (255, 255, 255),  # White border
+                    (255, 255, 255),
                     2
                 )
 
-                # Draw gauge line
                 cv2.line(
                     frame,
                     pt1,
                     pt2,
-                    (255, 0, 0),  # Blue
+                    (255, 0, 0),
                     3
                 )
 
-                # Draw marker labels
                 cv2.putText(
                     frame,
                     "P1",
@@ -597,7 +986,6 @@ class MainWindow(QtWidgets.QWidget):
                     2
                 )
 
-                # Display ready status
                 cv2.putText(
                     frame,
                     "READY - Enter Gauge Length to Start",
@@ -608,14 +996,12 @@ class MainWindow(QtWidgets.QWidget):
                     2
                 )
 
-        # Store current gray frame for next iteration
         self.old_gray = gray.copy()
 
         # ==================
         # DISPLAY FRAME
         # ==================
 
-        # Convert BGR to RGB for PyQt5
         rgb = cv2.cvtColor(
             frame,
             cv2.COLOR_BGR2RGB
@@ -623,8 +1009,6 @@ class MainWindow(QtWidgets.QWidget):
 
         h, w, ch = rgb.shape
 
-        # Create QImage with proper byte order
-        # CRITICAL: Pass rgb.data directly (it's already writable)
         img = QtGui.QImage(
             rgb.data,
             w,
@@ -633,7 +1017,6 @@ class MainWindow(QtWidgets.QWidget):
             QtGui.QImage.Format_RGB888
         )
 
-        # Convert to QPixmap and scale to label size
         pixmap = QtGui.QPixmap.fromImage(img)
 
         self.video_label.setPixmap(
@@ -644,35 +1027,210 @@ class MainWindow(QtWidgets.QWidget):
             )
         )
 
+    def handle_graph_update(self, timestamp, elapsed_time, distance_mm, strain, frame_number, status):
+        """
+        Slot to handle live graph updates when a successful tracking frame is processed.
+        Updates internal data buffers, appends to graphs, and logs debug output.
+        """
+        self.time_data.append(elapsed_time)
+        self.strain_data.append(strain)
+        self.distance_data.append(distance_mm)
+
+        if len(self.time_data) > 10000:
+            self.time_data = self.time_data[-10000:]
+            self.strain_data = self.strain_data[-10000:]
+            self.distance_data = self.distance_data[-10000:]
+
+        self.strain_graph.append_point(elapsed_time, strain)
+        self.strain_graph.update_live_metrics(elapsed=elapsed_time, fps=self.fps_smoothed, current_strain=strain, current_distance=distance_mm)
+
+        self.dist_graph.append_point(elapsed_time, distance_mm)
+        self.dist_graph.update_live_metrics(elapsed=elapsed_time, fps=self.fps_smoothed, current_strain=strain, current_distance=distance_mm)
+
+        extension_mm = self._get_extension_mm()
+        self.sample_manager.maybe_record(
+            elapsed_time,
+            distance_mm,
+            extension_mm,
+            strain,
+        )
+
+        # Print debug log in the requested format
+        # [GRAPH UPDATE]
+        # Frame: 125
+        # Time: 4.18 s
+        # Distance: 63.42 mm
+        # Strain: 2.184 %
+        strain_percent = strain * 100.0
+        print(f"[GRAPH UPDATE]\nFrame: {frame_number}\nTime: {elapsed_time:.2f} s\nDistance: {distance_mm:.2f} mm\nStrain: {strain_percent:.3f} %")
+
+    def restart_test(self):
+        """
+        Restart the current test after operator confirmation.
+        Discards current measurements without saving any report.
+        """
+        result = CustomDialog.question(
+            self,
+            "Restart Current Test?",
+            "Current measurements will be discarded.",
+            description="No report will be saved.",
+            buttons=["Restart", "Cancel"],
+            default_button="Cancel"
+        )
+        
+        if result == CustomDialog.Yes:
+            print("[RESTART TEST] Operator confirmed restart. Clearing test state...")
+            self.sample_manager.discard_session()
+            # 1. Stop tracking immediately
+            self.tracking = False
+            
+            # 2. Clear selected markers and calibration
+            self.markers_selected = False
+            self.current_markers = None
+            self.frozen_frame = None
+            self.old_gray = None
+            self.pixel_to_mm = None
+            self.initial_mm = None
+            self.initial_pixel_distance = None
+            self.current_pixel_distance = None
+            self._test_completed = False
+            self._frozen_test_seconds = None
+            
+            # 3. Clear strain and distance measurements
+            self.current_strain = 0.0
+            self.current_distance_mm = 0.0
+            
+            # 4. Clear graphs
+            self.strain_graph.clear()
+            self.dist_graph.clear()
+            
+            # 5. Clear timers & frame counter
+            self.start_time = None
+            self.time_data = []
+            self.strain_data = []
+            self.distance_data = []
+            self.frame_count = 0
+            
+            # 6. Reset inputs to defaults/empty
+            self.material_input.setText("Steel")
+            self.sample_name_input.clear()
+            self.test_name_input.setText("Tensile Test")
+            self.remarks_input.clear()
+            self.gauge_input.clear()
+            
+            # 7. Reset HUD labels
+            self.hud_material.setText(self.material_input.text())
+            self.hud_gauge.setText("—")
+            self.hud_init_dist.setText("—")
+            self.hud_curr_dist.setText("—")
+            self.hud_extension.setText("—")
+            self.hud_strain.setText("—")
+            self.hud_status.setText("Idle")
+            self.hud_status.setStyleSheet("font-size: 14px; font-weight: bold; color: #94a3b8;")
+            
+            # 8. Reset button states
+            self.capture_btn.setEnabled(True)
+            self.restart_btn.setEnabled(True)
+            self.start_btn.setEnabled(False)
+            self.stop_save_btn.setEnabled(False)
+            
+            self._emit_dashboard_update(force=True)
+            print("[RESTART TEST] ✓ Test state successfully reset")
+
+    def create_camera_icon(self):
+        pixmap = QtGui.QPixmap(32, 32)
+        pixmap.fill(QtCore.Qt.transparent)
+        painter = QtGui.QPainter(pixmap)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        painter.setPen(QtCore.Qt.NoPen)
+        painter.setBrush(QtGui.QBrush(QtGui.QColor("white")))
+        # Camera top bump
+        painter.drawRoundedRect(QtCore.QRectF(10, 6, 12, 5), 2, 2)
+        # Camera main body
+        painter.drawRoundedRect(QtCore.QRectF(4, 11, 24, 15), 3, 3)
+        # Punch a hole for the lens ring using DestinationOut
+        painter.setCompositionMode(QtGui.QPainter.CompositionMode_DestinationOut)
+        painter.drawEllipse(QtCore.QPointF(16, 18), 6, 6)
+        # Restore composition mode to draw white lens center
+        painter.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)
+        painter.setBrush(QtGui.QBrush(QtGui.QColor("white")))
+        painter.drawEllipse(QtCore.QPointF(16, 18), 3, 3)
+        painter.end()
+        return QtGui.QIcon(pixmap)
+
+    def create_refresh_icon(self):
+        pixmap = QtGui.QPixmap(32, 32)
+        pixmap.fill(QtCore.Qt.transparent)
+        painter = QtGui.QPainter(pixmap)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        
+        pen = QtGui.QPen(QtGui.QColor("white"), 3)
+        pen.setCapStyle(QtCore.Qt.RoundCap)
+        painter.setPen(pen)
+        
+        # Circular reloading arrow path
+        painter.drawArc(QtCore.QRect(6, 6, 20, 20), 45 * 16, 270 * 16)
+        
+        # Arrow head pointing clockwise reload
+        painter.setPen(QtCore.Qt.NoPen)
+        painter.setBrush(QtGui.QBrush(QtGui.QColor("white")))
+        arrow = QtGui.QPolygonF([
+            QtCore.QPointF(20, 4),
+            QtCore.QPointF(27, 10),
+            QtCore.QPointF(20, 16)
+        ])
+        painter.drawPolygon(arrow)
+        painter.end()
+        return QtGui.QIcon(pixmap)
+
+    def create_play_icon(self):
+        pixmap = QtGui.QPixmap(32, 32)
+        pixmap.fill(QtCore.Qt.transparent)
+        painter = QtGui.QPainter(pixmap)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        painter.setPen(QtCore.Qt.NoPen)
+        painter.setBrush(QtGui.QBrush(QtGui.QColor("white")))
+        # Rightward triangle play arrow
+        triangle = QtGui.QPolygonF([
+            QtCore.QPointF(9, 6),
+            QtCore.QPointF(25, 16),
+            QtCore.QPointF(9, 26)
+        ])
+        painter.drawPolygon(triangle)
+        painter.end()
+        return QtGui.QIcon(pixmap)
+
+    def create_stop_icon(self):
+        pixmap = QtGui.QPixmap(32, 32)
+        pixmap.fill(QtCore.Qt.transparent)
+        painter = QtGui.QPainter(pixmap)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        painter.setPen(QtCore.Qt.NoPen)
+        painter.setBrush(QtGui.QBrush(QtGui.QColor("white")))
+        # Stop block square
+        painter.drawRoundedRect(QtCore.QRectF(7, 7, 18, 18), 3, 3)
+        painter.end()
+        return QtGui.QIcon(pixmap)
+
     # ==================
     # CLEANUP
     # ==================
 
     def closeEvent(self, event):
         """
-        Proper cleanup on window close:
-        1. Stop timer
-        2. Stop tracking
-        3. Stop camera acquisition
-        4. Release all resources
-        
-        CRITICAL: Ensures camera references are properly cleared
-        to prevent "reference still held" exceptions.
+        Proper cleanup on window close.
         """
         try:
             print("[SHUTDOWN] Initiating graceful shutdown...")
             
-            # Stop the main timer
             if hasattr(self, 'timer') and self.timer:
                 self.timer.stop()
                 print("[SHUTDOWN] Timer stopped")
             
-            # Stop tracking
             if hasattr(self, 'tracking'):
                 self.tracking = False
                 print("[SHUTDOWN] Tracking stopped")
             
-            # Release camera resources
             if hasattr(self, 'camera') and self.camera:
                 self.camera.release()
                 print("[SHUTDOWN] Camera released")

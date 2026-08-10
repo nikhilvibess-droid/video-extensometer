@@ -1,4 +1,5 @@
 import os
+import time
 
 dll_path = r"C:\Program Files\Teledyne\Spinnaker\bin64"
 legacy_path = r"C:\Program Files\Point Grey Research\Spinnaker\bin64"
@@ -33,10 +34,21 @@ class FLIRCamera:
 
         self.cam = self.cam_list.GetByIndex(0)
 
+        self._init_camera()
+        self._configure_stream_mode()
+
+        self.converter = PySpin.ImageProcessor()
+        self.converter.SetColorProcessing(
+            PySpin.SPINNAKER_COLOR_PROCESSING_ALGORITHM_HQ_LINEAR
+        )
+
+        self._begin_acquisition_with_retry()
+        print("[CAMERA] Acquisition started")
+
+    def _init_camera(self):
         self.cam.Init()
 
-        # Configure stream buffer handling for live video
-        # "NewestOnly" drops old frames to prevent latency buildup
+    def _configure_stream_mode(self):
         nodemap = self.cam.GetTLStreamNodeMap()
 
         handling_mode = PySpin.CEnumerationPtr(
@@ -47,25 +59,51 @@ class FLIRCamera:
             PySpin.IsReadable(handling_mode)
             and PySpin.IsWritable(handling_mode)
         ):
-            entry = handling_mode.GetEntryByName(
-                "NewestOnly"
-            )
-
-            handling_mode.SetIntValue(
-                entry.GetValue()
-            )
+            entry = handling_mode.GetEntryByName("NewestOnly")
+            handling_mode.SetIntValue(entry.GetValue())
             print("[CAMERA] Stream mode: NewestOnly (live video)")
 
-        # Initialize image processor for color conversion
-        self.converter = PySpin.ImageProcessor()
+    def _safe_end_acquisition(self):
+        try:
+            if self.cam and self.cam.IsInitialized() and self.cam.IsStreaming():
+                self.cam.EndAcquisition()
+        except PySpin.SpinnakerException:
+            pass
 
-        # Use high-quality linear color processing
-        self.converter.SetColorProcessing(
-            PySpin.SPINNAKER_COLOR_PROCESSING_ALGORITHM_HQ_LINEAR
-        )
+    def _reconnect_camera(self):
+        print("[CAMERA] Attempting camera reconnect...")
+        self._safe_end_acquisition()
+        try:
+            if self.cam.IsInitialized():
+                self.cam.DeInit()
+        except PySpin.SpinnakerException:
+            pass
 
-        self.cam.BeginAcquisition()
-        print("[CAMERA] Acquisition started")
+        time.sleep(0.5)
+        self._init_camera()
+        self._configure_stream_mode()
+
+    def _begin_acquisition_with_retry(self, max_retries=3):
+        last_error = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                self._safe_end_acquisition()
+                self.cam.BeginAcquisition()
+                return
+            except PySpin.SpinnakerException as exc:
+                last_error = exc
+                print(
+                    f"[CAMERA] BeginAcquisition failed "
+                    f"(attempt {attempt}/{max_retries}): {exc}"
+                )
+                if attempt < max_retries:
+                    self._reconnect_camera()
+                    time.sleep(0.5)
+
+        raise RuntimeError(
+            "Could not start camera acquisition. "
+            "Please reconnect the FLIR camera and try again."
+        ) from last_error
 
     def read(self):
         """
@@ -83,6 +121,9 @@ class FLIRCamera:
         Returns:
             tuple: (success: bool, frame: np.ndarray BGR8 writable or None)
         """
+        if not self.cam:
+            return False, None
+
         try:
             image = self.cam.GetNextImage(2000)
 

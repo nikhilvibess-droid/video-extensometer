@@ -1,0 +1,17 @@
+ID,Timestamp,Username,Role,Action,Result,Reason,Machine,OS User,Session,Version,Session Duration,Details
+16,2026-07-07 16:24:53,admin1,admin,Logout,Success,,DESKTOP-MPBL39K,DELL,c933151b-af69-4980-b2d4-94782a77bf45,v2.5.0-industrial,4312.76,
+15,2026-07-07 15:13:00,admin1,admin,Login,Success,,DESKTOP-MPBL39K,DELL,c933151b-af69-4980-b2d4-94782a77bf45,v2.5.0-industrial,,
+14,2026-07-07 15:12:46,superadmin,superadmin,Logout,Success,,DESKTOP-MPBL39K,DELL,b7cf9237-07a4-46be-bd77-9f1d666f6f21,v2.5.0-industrial,1867.97,
+13,2026-07-07 14:41:38,superadmin,superadmin,Login,Success,,DESKTOP-MPBL39K,DELL,b7cf9237-07a4-46be-bd77-9f1d666f6f21,v2.5.0-industrial,,
+12,2026-07-07 14:41:18,superadmin,superadmin,Logout,Success,,DESKTOP-MPBL39K,DELL,f35a9200-401e-41fd-83d9-acc4882cfb5d,v2.5.0-industrial,5728.38,
+11,2026-07-07 13:05:50,superadmin,superadmin,Login,Success,,DESKTOP-MPBL39K,DELL,f35a9200-401e-41fd-83d9-acc4882cfb5d,v2.5.0-industrial,,
+10,2026-07-07 13:05:32,admin1,admin,Logout,Success,,DESKTOP-MPBL39K,DELL,d2617a45-691d-4f04-a449-9ae61878aa6d,v2.5.0-industrial,111.94,
+9,2026-07-07 13:04:22,admin1,admin,Tracking Stopped,Success,,DESKTOP-MPBL39K,DELL,d2617a45-691d-4f04-a449-9ae61878aa6d,v2.5.0-industrial,,
+8,2026-07-07 13:04:22,admin1,admin,Report Generated,Success,,DESKTOP-MPBL39K,DELL,d2617a45-691d-4f04-a449-9ae61878aa6d,v2.5.0-industrial,,Report ID 1
+7,2026-07-07 13:04:19,admin1,admin,Tracking Started,Success,,DESKTOP-MPBL39K,DELL,d2617a45-691d-4f04-a449-9ae61878aa6d,v2.5.0-industrial,,
+6,2026-07-07 13:03:40,admin1,admin,Login,Success,,DESKTOP-MPBL39K,DELL,d2617a45-691d-4f04-a449-9ae61878aa6d,v2.5.0-industrial,,
+5,2026-07-07 13:03:26,superadmin,superadmin,Logout,Success,,DESKTOP-MPBL39K,DELL,879704b0-5f2b-4212-b071-7970d0e411ba,v2.5.0-industrial,17.28,
+4,2026-07-07 13:03:23,superadmin,superadmin,Clear All Reports,Success,Manual Maintenance,,,,,,Deleted Reports: 1; Deleted Timeline Samples: 0; Reason: Manual Maintenance
+3,2026-07-07 13:03:09,superadmin,superadmin,Login,Success,,DESKTOP-MPBL39K,DELL,879704b0-5f2b-4212-b071-7970d0e411ba,v2.5.0-industrial,,
+2,2026-07-07 13:01:55,admin1,admin,Unauthorized Report Clear Attempt,Denied,Insufficient permissions,,,,,,
+1,2026-07-07 13:01:55,superadmin,superadmin,Clear All Reports,Success,Manual Maintenance,,,,,,Deleted Reports: 4; Deleted Timeline Samples: 332; Reason: Manual Maintenance

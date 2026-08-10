@@ -50,6 +50,28 @@ class UserManager:
 
         return cur.fetchall()
 
+    def get_user_role(self, username):
+        cur = self.db.conn.cursor()
+        cur.execute(
+            "SELECT role FROM users WHERE username = ?",
+            (username,),
+        )
+        row = cur.fetchone()
+        cur.close()
+        return row[0] if row else None
+
+    def count_administrators(self):
+        cur = self.db.conn.cursor()
+        cur.execute(
+            """
+            SELECT COUNT(*) FROM users
+            WHERE role IN ('admin', 'superadmin')
+            """
+        )
+        count = cur.fetchone()[0]
+        cur.close()
+        return count
+
     def delete_user(
         self,
         username
